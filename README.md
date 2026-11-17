@@ -1,62 +1,32 @@
-# Delta SMC Bot v3.0 — Human Approval + Delta Demo foundation
+# Delta SMC Bot v4 — Research Scanner
 
-## Selected configuration
-- Virtual balance: user chooses a custom amount in dashboard
-- Risk display: 0.5% per signal by default
-- Human approval required
-- Explicit typed confirmation: `SUBMIT DEMO`
-- Demo API host only: `https://cdn-ind.testnet.deltaex.org`
-- Telegram + dashboard notifications
-- Intended symbols: BTCUSD and ETHUSD
+## What this build does
+- Fetches public Delta Exchange India candles for BTCUSD and ETHUSD.
+- Retrieves native 15m, 5m and 3m resolutions independently.
+- Removes the still-forming candle before analysis.
+- Evaluates a strict conjunction of 15m EMA200 trend, 5m swing-structure break proxy, 3m liquidity cluster (>=3 touches) with sweep/reclaim, and 3m three-candle FVG.
+- Displays research candidates in Streamlit.
 
-## Implemented
-- Streamlit approval inbox and signal history
-- SQLite persistence
-- Reject workflow
-- Demo-only signed REST order client
-- Stale-signal expiry after 180 seconds
-- Explicit second confirmation before Demo market entry
-- Telegram notification helper
-- Dummy signal generator for UI testing
+## Safety
+This build is **research-only**. It does not use API keys, submit orders, approve orders, size contracts, attach SL/TP, or manage positions. A candidate is not a trade instruction. Do not add live or Demo credentials to this version.
 
-## Critical limitations
-- The live market scanner is NOT connected yet. `scanner.py` is an implementation checklist.
-- The dummy signal is not a genuine SMC setup. Do not submit it to Demo unless intentionally testing a tiny Demo order and you understand the consequences.
-- Demo market entry only: no attached SL/TP, no exit management, no fill reconciliation, no position monitoring.
-- Contract size is manually entered as an integer. The 0.5% risk display is NOT converted into Delta contract quantity. Product multiplier, minimum quantity, tick size, margin and liquidation rules must be validated first.
-- Do not deploy this approval app publicly without authentication. Keep it private and protect credentials.
-- Never use production API credentials. Do not enable withdrawal permission.
+## Deploy
+1. Keep the existing GitHub repository private.
+2. Replace the existing project files with the files in this folder (upload all changed files; do not upload `.env`).
+3. Streamlit Cloud: deploy/reboot the app using `dashboard.py` as the entry point.
+4. Requirements are in `requirements.txt`.
 
 ## Run locally
-```bash
-python -m venv .venv
-# Android cloud environment or macOS/Linux:
-source .venv/bin/activate
-# Windows:
-.venv\\Scripts\\activate
-pip install -r requirements.txt
-cp .env.example .env
-streamlit run dashboard.py
-```
+`pip install -r requirements.txt`
+`streamlit run dashboard.py`
 
-## Telegram
-1. Create a bot with Telegram's official BotFather.
-2. Obtain the bot token and chat ID.
-3. Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in the private server environment or local `.env`.
-4. Never paste tokens into chat, screenshots, source files or GitHub commits.
+## Strategy definitions and known limitations
+- EMA200 is calculated on the latest closed 15m close.
+- Swing pivots use two bars on either side; the 5m BOS proxy requires a close beyond one of the recent confirmed pivot levels.
+- Liquidity clusters are approximated by at least three swing pivots within 0.07% of a reference level. Sweep/reclaim is checked on the latest closed 3m candle.
+- FVG is a three-candle imbalance (`current low > high two candles earlier` for bullish; inverse for bearish). Its midpoint is shown, but a later retracement into the zone is not yet required.
+- CHoCH classification, inducement, order blocks, premium/discount arrays, multi-sweep sequencing, setup deduplication, alert expiry, and independent backtest validation are not yet implemented.
+- REST candle polling is not tick-level real-time data. Always check the closed-candle timestamp.
 
-## Delta Demo API
-The client uses the India Demo REST host and Delta's documented HMAC-SHA256 prehash:
-HTTP method + timestamp + request path + query string + exact JSON body.
-Required headers include api-key, signature, timestamp, User-Agent, Content-Type and Accept.
-The market order payload uses `product_symbol`, integer `size`, `side`, `order_type=market_order`, and `time_in_force=ioc`.
-Verify current documentation and Demo product metadata before enabling API credentials. Demo keys must only be used with the Demo host.
-
-## Next mandatory work before strategy-generated Demo orders
-1. Complete and audit the scanner with native timeframe candles and closed-bar synchronization.
-2. Validate product metadata for BTCUSD/ETHUSD, contract multipliers, size increments, tick sizes and margin.
-3. Convert risk budget to valid contract size and cap maximum notional exposure.
-4. Add price freshness recheck immediately before approval submission.
-5. Add attached protective stop and take-profit order handling; verify order state and fills.
-6. Add idempotency, retry handling, API health checks and emergency cancel/close controls.
-7. Add authentication/HTTPS and secret management before any remote deployment.
+## Delta API
+Uses public `GET /v2/history/candles` on `https://api.india.delta.exchange`, with `symbol`, `resolution`, `start`, and `end` query parameters. Delta documents native 3m/5m/15m resolutions and a maximum of 2,000 candles per response. See https://docs.delta.exchange/.

@@ -1,94 +1,74 @@
-import json
-import pandas as pd
 import streamlit as st
-from config import DEFAULT_VIRTUAL_BALANCE, SYMBOLS
-from store import init_db, add_signal, all_signals, get_signal, update_signal
-from telegram_notify import send_telegram
-from demo_execution import submit_approved_demo_entry
+import pandas as pd
+from datetime import datetime, timezone
+from config import SYMBOLS
+from scanner import scan_symbol, DeltaDataError
 
-st.set_page_config(page_title="Delta SMC v3.0", page_icon="📈", layout="wide")
-init_db()
-st.title("Delta SMC Bot v3.0")
-st.caption("Human-approved entries · Delta Demo only · Telegram + dashboard")
-
-st.warning("DEMO ENTRY ONLY. This version does not attach protective stop-loss/take-profit orders or manage exits. Do not use live credentials. Verify product specs and contract sizing before any Demo submission.")
+st.set_page_config(page_title="Delta SMC Bot v4 Research", page_icon="📈", layout="wide")
+st.title("Delta SMC Bot v4 · Market Scanner")
+st.caption("Public Delta market data · closed candles only · research alerts · NO order execution")
+st.warning("SAFE RESEARCH MODE: API keys are not used. This build cannot submit, approve, or execute orders. Signals are candidates for manual review, not financial advice.")
 
 with st.sidebar:
-    st.header("Risk settings")
-    virtual_balance = st.number_input("Custom virtual balance (USD)", min_value=50.0,
-                                      value=float(DEFAULT_VIRTUAL_BALANCE), step=50.0)
-    risk_percent = st.select_slider("Risk per signal (%)", options=[0.25, 0.5, 0.75, 1.0], value=0.5)
-    st.metric("Risk budget per signal", f"${virtual_balance * risk_percent / 100:.2f}")
-    st.divider()
-    st.caption("Virtual balance and risk budget are informational in this approval-workflow build. They do not determine exchange contract quantity.")
+    st.header("Scanner settings")
+    selected = st.multiselect("Instruments", SYMBOLS, default=SYMBOLS)
+    st.caption("Fixed strategy filters: 15m EMA200, 5m structure break, 3m liquidity cluster (minimum 3 touches) + sweep/reclaim, and 3m FVG.")
+    st.caption("Risk model target: 0.5% risk and 1:2 RR are not used for position sizing in this research-only build.")
 
-st.subheader("Signal inbox")
-signals = all_signals()
-pending = [s for s in signals if s["status"] == "PENDING_APPROVAL"]
+st.subheader("Run market scan")
+if st.button("Fetch candles and scan now", type="primary", disabled=not selected):
+    st.session_state["scan_results"] = {}
+    for symbol in selected:
+        with st.spinner(f"Fetching native 15m / 5m / 3m candles for {symbol}..."):
+            try:
+                data, results = scan_symbol(symbol)
+                st.session_state["scan_results"][symbol] = {"data":data,"results":results,"error":None}
+            except Exception as exc:
+                st.session_state["scan_results"][symbol] = {"data":None,"results":[],"error":str(exc)}
 
-if pending:
-    for signal in pending:
-        with st.container(border=True):
-            st.markdown(f"### #{signal['id']} · {signal['symbol']} · {signal['side'].upper()}")
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Signal entry", f"{signal['entry']:,.2f}")
-            c2.metric("Stop reference", f"{signal['stop']:,.2f}")
-            c3.metric("Target reference", f"{signal['target']:,.2f}")
-            st.caption("Check current market price and setup validity yourself. Signal auto-expires after 3 minutes.")
-            st.error("No protective SL/TP is attached by this build. Demo entry only.")
-            if st.button("Reject signal", key=f"reject{signal['id']}"):
-                update_signal(signal["id"], "REJECTED", "Rejected by user.")
-                send_telegram(f"Delta SMC signal #{signal['id']} {signal['symbol']} rejected.")
-                st.rerun()
-            with st.form(f"approve{signal['id']}"):
-                st.write("Demo order confirmation")
-                product_symbol = st.selectbox("Confirm Demo product symbol", SYMBOLS,
-                                              index=SYMBOLS.index(signal["symbol"]))
-                contract_size = st.number_input("Contract quantity (integer)", min_value=1, value=1, step=1)
-                confirmation = st.text_input('Type "SUBMIT DEMO" to enable submission')
-                submitted = st.form_submit_button("Approve and submit to Delta Demo")
-                if submitted:
-                    try:
-                        result = submit_approved_demo_entry(signal["id"], product_symbol,
-                                                            int(contract_size), confirmation)
-                        st.success("Demo entry submitted. API response:")
-                        st.json(result)
-                        send_telegram(f"Delta SMC: Demo entry submitted for #{signal['id']} {signal['symbol']} {signal['side']}. Check Demo account for order/fill.")
-                        st.rerun()
-                    except Exception as exc:
-                        st.error(str(exc))
+results = st.session_state.get("scan_results", {})
+if results:
+    for symbol, item in results.items():
+        st.markdown(f"### {symbol}")
+        if item["error"]:
+            st.error(item["error"])
+            continue
+        data = item["data"]
+        cols = st.columns(3)
+        for col, tf in zip(cols, ("15m","5m","3m")):
+            df = data[tf]
+            col.metric(f"{tf} closed candles", len(df))
+            col.caption(f"Last close: {float(df.close.iloc[-1]):,.4f}")
+            col.caption(f"Last closed: {df.time_utc.iloc[-1]}")
+        for res in item["results"]:
+            with st.container(border=True):
+                side = res["side"].upper()
+                st.markdown(f"**{side} setup evaluation**")
+                if res.get("candidate") is False:
+                    st.info("No complete setup — at least one mandatory condition failed.")
+                    st.write("Checks", res["checks"])
+                    if res.get("reasons"): st.caption(" · ".join(res["reasons"]))
+                else:
+                    st.success("All coded filters matched — research candidate only")
+                    a,b,c = st.columns(3)
+                    a.metric("FVG midpoint entry", f"{res['entry']:,.4f}")
+                    b.metric("Sweep candle stop ref", f"{res['stop']:,.4f}")
+                    c.metric("Illustrative 2R target", f"{res['target']:,.4f}")
+                    st.write({k:v for k,v in res.items() if k not in ("checks",)})
+                    st.warning("This is not an executable signal. FVG retracement, fresh-price validity, contract sizing, SL/TP order attachment and fill reconciliation are not implemented.")
+        st.divider()
 else:
-    st.info("No pending signals. The live SMC scanner is not connected in this build.")
+    st.info("No scan has been run in this session. Tap 'Fetch candles and scan now'.")
 
-st.subheader("Signal history")
-history = all_signals()
-if history:
-    frame = pd.DataFrame(history)
-    st.dataframe(frame.drop(columns=["order_response"], errors="ignore"), use_container_width=True)
-    st.download_button("Download history CSV", frame.to_csv(index=False),
-                       "delta_smc_signal_history.csv", "text/csv")
+st.subheader("Methodology and limitations")
+st.markdown("""
+- Each timeframe is fetched natively from Delta's public historical candle endpoint; no timeframe resampling.
+- The currently forming candle is removed before analysis.
+- EMA200 trend uses the latest closed 15m candle.
+- 5m structure break uses confirmed local swing pivots; this is a transparent BOS proxy, not a complete discretionary CHoCH model.
+- 3m liquidity uses swing pivot clusters with at least three nearby touches, followed by sweep and close-back-through.
+- 3m FVG uses a three-candle high/low imbalance. The dashboard reports its midpoint but does not wait for a later retracement.
+- Historical REST polling is not a tick-level real-time feed. Use the timestamp shown to judge freshness.
 
-st.divider()
-st.subheader("Create a test approval card")
-st.caption("This creates a dummy signal only to test the dashboard workflow. It is not a market-generated SMC signal.")
-with st.form("dummy"):
-    sym = st.selectbox("Test instrument", SYMBOLS)
-    direction = st.selectbox("Test direction", ["long", "short"])
-    default_entry = 65000.0 if sym == "BTCUSD" else 3500.0
-    entry = st.number_input("Illustrative entry", min_value=0.01, value=default_entry)
-    stop = st.number_input("Illustrative stop", min_value=0.01,
-                           value=entry - 500 if direction == "long" else entry + 30)
-    make = st.form_submit_button("Create dummy approval card")
-    if make:
-        if (direction == "long" and stop >= entry) or (direction == "short" and stop <= entry):
-            st.error("Stop is on the wrong side of entry.")
-        else:
-            target = entry + 2 * abs(entry-stop) if direction == "long" else entry - 2 * abs(entry-stop)
-            from datetime import datetime, timezone
-            signal = {"symbol":sym, "side":direction, "entry":entry, "stop":stop,
-                      "target":target, "risk_cash":virtual_balance*risk_percent/100,
-                      "created_at":datetime.now(timezone.utc).isoformat(), "note":"DUMMY TEST ONLY"}
-            sid = add_signal(signal)
-            ok, message = send_telegram(f"TEST signal #{sid}: {sym} {direction.upper()} Entry {entry}, SL {stop}, TP {target}. Dashboard approval required.")
-            st.success(f"Dummy signal #{sid} created. Telegram: {message}")
-            st.rerun()
+Before any Demo execution is considered, this scanner needs independent signal-label validation, backtests with fees/slippage, setup deduplication/expiry, actual FVG retracement trigger, risk-to-contract conversion, attached protective SL/TP, order/fill reconciliation, and a kill switch.
+""")
