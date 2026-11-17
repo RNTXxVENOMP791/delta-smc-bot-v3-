@@ -1,74 +1,85 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timezone
 from config import SYMBOLS
 from scanner import scan_symbol, DeltaDataError
+from backtest import run_backtest
 
-st.set_page_config(page_title="Delta SMC Bot v4 Research", page_icon="📈", layout="wide")
-st.title("Delta SMC Bot v4 · Market Scanner")
-st.caption("Public Delta market data · closed candles only · research alerts · NO order execution")
-st.warning("SAFE RESEARCH MODE: API keys are not used. This build cannot submit, approve, or execute orders. Signals are candidates for manual review, not financial advice.")
-
+st.set_page_config(page_title="Delta SMC Bot v5 Research", page_icon="📈", layout="wide")
+st.title("Delta SMC Bot v5 · Research & Backtesting")
+st.caption("Public historical market data · closed candles · NO order execution")
+st.warning("SAFE RESEARCH MODE: No API keys, no approvals, and no exchange orders. Backtest results are estimates, not predictions.")
 with st.sidebar:
-    st.header("Scanner settings")
+    st.header("Research settings")
     selected = st.multiselect("Instruments", SYMBOLS, default=SYMBOLS)
-    st.caption("Fixed strategy filters: 15m EMA200, 5m structure break, 3m liquidity cluster (minimum 3 touches) + sweep/reclaim, and 3m FVG.")
-    st.caption("Risk model target: 0.5% risk and 1:2 RR are not used for position sizing in this research-only build.")
+    days = st.selectbox("Historical window", [30, 60, 90], index=2)
+    fee_bps = st.number_input("Estimated fee per side (bps)", min_value=0.0, max_value=50.0, value=5.0, step=0.5)
+    slippage_bps = st.number_input("Estimated slippage per side (bps)", min_value=0.0, max_value=50.0, value=2.0, step=0.5)
+    st.caption("Strategy filters remain strict: 15m EMA200, 5m swing-break proxy, 3m liquidity (3+ touches) + sweep/reclaim, and 3m FVG.")
 
-st.subheader("Run market scan")
-if st.button("Fetch candles and scan now", type="primary", disabled=not selected):
-    st.session_state["scan_results"] = {}
-    for symbol in selected:
-        with st.spinner(f"Fetching native 15m / 5m / 3m candles for {symbol}..."):
-            try:
-                data, results = scan_symbol(symbol)
-                st.session_state["scan_results"][symbol] = {"data":data,"results":results,"error":None}
-            except Exception as exc:
-                st.session_state["scan_results"][symbol] = {"data":None,"results":[],"error":str(exc)}
-
-results = st.session_state.get("scan_results", {})
-if results:
-    for symbol, item in results.items():
+tab1, tab2 = st.tabs(["Live scan (research only)", "Historical backtest"])
+with tab1:
+    if st.button("Fetch candles and scan now", type="primary", disabled=not selected):
+        st.session_state["scan_results"] = {}
+        for symbol in selected:
+            with st.spinner(f"Scanning {symbol}..."):
+                try:
+                    data, results = scan_symbol(symbol)
+                    st.session_state.scan_results[symbol] = {"data": data, "results": results, "error": None}
+                except Exception as exc:
+                    st.session_state.scan_results[symbol] = {"data": None, "results": [], "error": str(exc)}
+    for symbol, item in st.session_state.get("scan_results", {}).items():
         st.markdown(f"### {symbol}")
         if item["error"]:
-            st.error(item["error"])
-            continue
-        data = item["data"]
+            st.error(item["error"]); continue
         cols = st.columns(3)
-        for col, tf in zip(cols, ("15m","5m","3m")):
-            df = data[tf]
+        for col, tf in zip(cols, ("15m", "5m", "3m")):
+            df = item["data"][tf]
             col.metric(f"{tf} closed candles", len(df))
             col.caption(f"Last close: {float(df.close.iloc[-1]):,.4f}")
-            col.caption(f"Last closed: {df.time_utc.iloc[-1]}")
         for res in item["results"]:
             with st.container(border=True):
-                side = res["side"].upper()
-                st.markdown(f"**{side} setup evaluation**")
+                st.markdown(f"**{res['side'].upper()} setup evaluation**")
                 if res.get("candidate") is False:
                     st.info("No complete setup — at least one mandatory condition failed.")
-                    st.write("Checks", res["checks"])
-                    if res.get("reasons"): st.caption(" · ".join(res["reasons"]))
+                    st.write(res["checks"]); st.caption(" · ".join(res.get("reasons", [])))
                 else:
-                    st.success("All coded filters matched — research candidate only")
-                    a,b,c = st.columns(3)
-                    a.metric("FVG midpoint entry", f"{res['entry']:,.4f}")
-                    b.metric("Sweep candle stop ref", f"{res['stop']:,.4f}")
-                    c.metric("Illustrative 2R target", f"{res['target']:,.4f}")
-                    st.write({k:v for k,v in res.items() if k not in ("checks",)})
-                    st.warning("This is not an executable signal. FVG retracement, fresh-price validity, contract sizing, SL/TP order attachment and fill reconciliation are not implemented.")
+                    st.success("Coded filters matched — research candidate only")
+                    st.write({k: v for k, v in res.items() if k != "checks"})
+                    st.warning("Not executable: retracement/freshness and exchange risk controls are not implemented.")
         st.divider()
-else:
-    st.info("No scan has been run in this session. Tap 'Fetch candles and scan now'.")
+with tab2:
+    st.write("Walk-forward replay. Candidate detection uses only candles closed at each evaluation time. Entry requires a later revisit to the FVG midpoint.")
+    if st.button("Run historical backtest", type="primary", disabled=not selected):
+        st.session_state["backtest_results"] = {}
+        for symbol in selected:
+            with st.spinner(f"Downloading and replaying {days} days for {symbol}; this may take a few minutes..."):
+                try:
+                    trades, summary = run_backtest(symbol, days=days, fee_bps=fee_bps, slippage_bps=slippage_bps)
+                    st.session_state.backtest_results[symbol] = {"trades": trades, "summary": summary, "error": None}
+                except Exception as exc:
+                    st.session_state.backtest_results[symbol] = {"trades": pd.DataFrame(), "summary": {}, "error": str(exc)}
+    for symbol, item in st.session_state.get("backtest_results", {}).items():
+        st.markdown(f"### {symbol}")
+        if item["error"]:
+            st.error(item["error"]); continue
+        s = item["summary"]
+        a,b,c,d,e = st.columns(5)
+        a.metric("Trades", s["trades"]); b.metric("Win rate", f"{s['win_rate_pct']:.2f}%")
+        c.metric("Net R", s["net_R"]); d.metric("Profit factor", s["profit_factor"] if s["profit_factor"] is not None else "N/A")
+        e.metric("Max drawdown (R)", s["max_drawdown_R"])
+        st.caption(s["note"])
+        if not item["trades"].empty:
+            st.dataframe(item["trades"], use_container_width=True)
+            st.download_button(f"Download {symbol} trade log CSV", item["trades"].to_csv(index=False), file_name=f"{symbol.lower()}_backtest.csv", mime="text/csv")
 
-st.subheader("Methodology and limitations")
+st.subheader("Methodology & limitations")
 st.markdown("""
-- Each timeframe is fetched natively from Delta's public historical candle endpoint; no timeframe resampling.
-- The currently forming candle is removed before analysis.
-- EMA200 trend uses the latest closed 15m candle.
-- 5m structure break uses confirmed local swing pivots; this is a transparent BOS proxy, not a complete discretionary CHoCH model.
-- 3m liquidity uses swing pivot clusters with at least three nearby touches, followed by sweep and close-back-through.
-- 3m FVG uses a three-candle high/low imbalance. The dashboard reports its midpoint but does not wait for a later retracement.
-- Historical REST polling is not a tick-level real-time feed. Use the timestamp shown to judge freshness.
-
-Before any Demo execution is considered, this scanner needs independent signal-label validation, backtests with fees/slippage, setup deduplication/expiry, actual FVG retracement trigger, risk-to-contract conversion, attached protective SL/TP, order/fill reconciliation, and a kill switch.
+- Native 3m/5m/15m public candles; currently forming candles excluded.
+- 15m EMA200 and 5m swing-break proxy are inherited from the V4 scanner; this is not full discretionary BOS/CHoCH labeling.
+- Liquidity clustering and FVG definitions are mechanical approximations and need chart-by-chart review.
+- Backtest uses FVG midpoint entry only after a later candle revisits that level; no revisit means no trade.
+- Stop is sweep-candle extreme; target is fixed 2R. If stop and target are both inside one OHLC candle, stop is assumed first.
+- Fees and slippage are user-entered estimates per side; funding, spread variation, latency, contract sizing and liquidation are not modeled.
+- Historical API availability/rate limits may constrain 90-day retrieval. Check candle coverage before trusting metrics.
+- This is a research prototype, not a validated strategy or investment advice. Never connect exchange keys or enable order execution from this build.
 """)
