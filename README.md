@@ -1,23 +1,41 @@
-# Delta SMC Bot V5 — Research & Backtesting
+# Delta SMC Bot v5.1 — Optimized Research Backtester
 
-Research-only Streamlit app for BTCUSD and ETHUSD. No API keys or order execution.
+Research-only Streamlit application for BTCUSD and ETHUSD public historical candles. **No API keys, approvals, or exchange order execution are included.**
 
-## Features
-- Native public 3m, 5m and 15m candle retrieval.
-- Strict V4 scanner filters (15m EMA200, 5m swing-break proxy, 3m liquidity cluster + sweep/reclaim, 3m FVG).
-- Walk-forward historical replay for 30/60/90 days.
-- FVG midpoint entry only after a later candle revisits the level.
-- Fixed 2R target, sweep-candle stop reference, estimated per-side fee/slippage inputs.
-- Trade log CSV export.
+## Files
+- `dashboard.py` — Streamlit dashboard, duration selector, per-symbol run, progress, LONG/SHORT reports.
+- `backtest.py` — walk-forward historical replay and six-hour cached candle downloads.
+- `scanner.py` — V4 mechanical SMC research scanner (strict mandatory conditions).
+- `config.py` — supported symbols.
+- `requirements.txt` — Python dependencies.
 
-## Run locally
+## Run
 ```bash
 pip install -r requirements.txt
 streamlit run dashboard.py
 ```
 
-## Deploy
-Streamlit Community Cloud: repository root `dashboard.py`. Keep repository private where possible. No secrets are required.
+## Suggested test sequence
+1. Select one symbol and run 7 days.
+2. Repeat for the other symbol.
+3. If both complete, test 30 days, then 90 days.
+
+Candle data is cached for six hours by symbol/timeframe/window. The backtest processes one instrument at a time and displays progress. Re-running with the same cache key should avoid downloading the same candle history again.
+
+## Strategy rules retained
+- 15m EMA200 directional filter.
+- 5m confirmed swing-break proxy.
+- 3m liquidity cluster with at least 3 touches plus sweep/reclaim.
+- 3m FVG.
+- All mandatory conditions must pass.
+- 2R target. The risk assumption defaults to 0.5% per trade.
+
+The 0.5% risk is used only to illustrate `net_R × risk%` as a non-compounded return estimate. Contract quantity sizing is not implemented.
 
 ## Important limitations
-This is a research prototype, not a validated trading strategy. BOS/CHoCH is a swing-break proxy; liquidity and FVG are mechanical approximations. Funding, spread variation, latency, contract sizing, liquidation and exact intrabar price path are not modeled. If SL and TP are both touched within one OHLC candle, the backtest assumes SL first. API rate limits and historical data coverage must be checked. No order execution is implemented or enabled.
+- The BOS/CHoCH logic is a mechanical swing-break proxy, not discretionary structure labeling.
+- Liquidity and FVG detection are simplified mechanical definitions.
+- Fees/slippage are estimates; funding, variable spread, latency, liquidation and contract sizing are not modeled.
+- Intrabar ordering is unknown; if SL and TP occur in the same OHLC candle, SL is assumed first.
+- A backtest is not evidence of future profitability. Review trades chart-by-chart before considering paper trading.
+- **Never add exchange credentials or enable live/demo order execution in this research build.**
