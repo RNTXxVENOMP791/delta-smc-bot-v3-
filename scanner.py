@@ -98,6 +98,17 @@ def _fvg(df: pd.DataFrame, side: str):
         return lo, hi, (lo+hi)/2
     return None
 
+def _stop_from_sweep(side: str, sweep_candle: pd.Series, fvg_low: float, fvg_high: float) -> float:
+    """Place stop beyond BOTH the sweep extreme and the FVG boundary."""
+    if side == "long":
+        reference = min(float(sweep_candle.low), float(fvg_low))
+        return reference - max(abs(reference) * 1e-8, 1e-8)
+    if side == "short":
+        reference = max(float(sweep_candle.high), float(fvg_high))
+        return reference + max(abs(reference) * 1e-8, 1e-8)
+    raise ValueError(f"Unsupported side: {side}")
+
+
 def analyze(symbol: str, d15: pd.DataFrame, d5: pd.DataFrame, d3: pd.DataFrame, use_ema_filter: bool = False):
     close15 = d15.close.astype(float)
     ema200 = close15.ewm(span=200, adjust=False).mean().iloc[-1]
@@ -134,10 +145,11 @@ def analyze(symbol: str, d15: pd.DataFrame, d5: pd.DataFrame, d3: pd.DataFrame, 
             mandatory_checks.append(checks["15m EMA200 trend"])
         if all(mandatory_checks) and liq and fvg:
             entry = fvg[2]
-            # Stop beyond the sweep candle extreme; 2R target.
+            # Stop beyond both the sweep-candle extreme and the FVG boundary.
+            # This keeps the stop on the protective side of the midpoint entry.
             sweep_candle = d3.iloc[-1]
-            stop = float(sweep_candle.low) if side == "long" else float(sweep_candle.high)
-            risk = abs(entry-stop)
+            stop = _stop_from_sweep(side, sweep_candle, fvg[0], fvg[1])
+            risk = (entry - stop) if side == "long" else (stop - entry)
             if risk > 0:
                 target = entry + 2*risk if side == "long" else entry - 2*risk
                 results.append({"symbol":symbol,"side":side,"entry":entry,"stop":stop,"target":target,
