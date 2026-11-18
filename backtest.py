@@ -270,5 +270,11 @@ def run_backtest(symbol: str, days: int = 7, fee_bps: float = 5.0, slippage_bps:
 
 
 def side_summaries(trades: pd.DataFrame, risk_pct: float) -> dict:
-    return {side: _summary(trades[trades.side == side].reset_index(drop=True), risk_pct)
-            for side in ("long", "short")}
+    """Return LONG/SHORT summaries safely, including when no trades were found."""
+    if trades is None or trades.empty or "side" not in trades.columns:
+        empty = pd.DataFrame(columns=["side", "net_R"])
+        return {side: _summary(empty, risk_pct) for side in ("long", "short")}
+    return {
+        side: _summary(trades[trades["side"].astype(str).str.lower() == side].reset_index(drop=True), risk_pct)
+        for side in ("long", "short")
+    }
