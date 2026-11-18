@@ -1,41 +1,37 @@
-# Delta SMC Bot v5.1 — Optimized Research Backtester
+# Delta SMC Bot V5.2 — Accounting & Trade Validation Research
 
-Research-only Streamlit application for BTCUSD and ETHUSD public historical candles. **No API keys, approvals, or exchange order execution are included.**
+**Research-only build. No API keys, approvals, exchange orders, or live/demo execution.**
 
-## Files
-- `dashboard.py` — Streamlit dashboard, duration selector, per-symbol run, progress, LONG/SHORT reports.
-- `backtest.py` — walk-forward historical replay and six-hour cached candle downloads.
-- `scanner.py` — V4 mechanical SMC research scanner (strict mandatory conditions).
-- `config.py` — supported symbols.
-- `requirements.txt` — Python dependencies.
+## V5.2 changes
+
+- Rejects invalid trade geometry before replay: LONG requires `stop < entry < target`; SHORT requires `target < entry < stop`.
+- Validates that the supplied target is approximately 2R from the planned entry.
+- Calculates realized R from the adverse entry fill to the stop distance, rather than using an absolute distance that can hide a stop on the wrong side.
+- Applies adverse entry/exit slippage and estimated fees on both sides.
+- Models gap-through stops at the worse candle open; if stop and target are both touched in one OHLC candle, stop is assumed first.
+- Allows only one open simulated position per instrument at a time; unresolved positions at the end of the replay are excluded.
+- Displays and exports rejected candidate reasons separately from valid completed trades.
+- Preserves the existing strict strategy filters, 0.5% default risk assumption, and 1:2 target rule.
 
 ## Run
+
+Streamlit Cloud entry point: `dashboard.py`.
+
+Local install:
+
 ```bash
 pip install -r requirements.txt
 streamlit run dashboard.py
 ```
 
-## Suggested test sequence
-1. Select one symbol and run 7 days.
-2. Repeat for the other symbol.
-3. If both complete, test 30 days, then 90 days.
-
-Candle data is cached for six hours by symbol/timeframe/window. The backtest processes one instrument at a time and displays progress. Re-running with the same cache key should avoid downloading the same candle history again.
-
-## Strategy rules retained
-- 15m EMA200 directional filter.
-- 5m confirmed swing-break proxy.
-- 3m liquidity cluster with at least 3 touches plus sweep/reclaim.
-- 3m FVG.
-- All mandatory conditions must pass.
-- 2R target. The risk assumption defaults to 0.5% per trade.
-
-The 0.5% risk is used only to illustrate `net_R × risk%` as a non-compounded return estimate. Contract quantity sizing is not implemented.
+Start with 7 days and one instrument at a time. Run BTCUSD and ETHUSD separately, then inspect both the completed-trade CSV and rejected-candidate audit CSV.
 
 ## Important limitations
-- The BOS/CHoCH logic is a mechanical swing-break proxy, not discretionary structure labeling.
-- Liquidity and FVG detection are simplified mechanical definitions.
-- Fees/slippage are estimates; funding, variable spread, latency, liquidation and contract sizing are not modeled.
-- Intrabar ordering is unknown; if SL and TP occur in the same OHLC candle, SL is assumed first.
-- A backtest is not evidence of future profitability. Review trades chart-by-chart before considering paper trading.
-- **Never add exchange credentials or enable live/demo order execution in this research build.**
+
+- 15m EMA200, 5m swing-break proxy, liquidity clustering/sweep and FVG remain mechanical research approximations inherited from V4. They are not full discretionary BOS/CHoCH labeling.
+- OHLC candles cannot reveal exact intrabar event ordering. The backtest uses conservative stop-first handling when both barriers are touched in one candle.
+- Fees and slippage are user estimates. Funding, variable spread, latency, contract metadata/sizing, liquidation, partial fills and compounding are not modeled.
+- The 0.5% setting is only an illustrative R-to-equity assumption; it is not exchange position sizing or a promise of fixed realized account risk.
+- A valid backtest is not evidence of future profitability. Review trade logs and rejected candidates before considering any further testing.
+
+Never add exchange credentials to this research build. Demo/live execution is not implemented.

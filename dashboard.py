@@ -4,8 +4,8 @@ from config import SYMBOLS
 from scanner import scan_symbol
 from backtest import run_backtest, side_summaries
 
-st.set_page_config(page_title="Delta SMC Bot v5.1 Research", page_icon="📈", layout="wide")
-st.title("Delta SMC Bot v5.1 · Optimized Research & Backtesting")
+st.set_page_config(page_title="Delta SMC Bot v5.2 Research", page_icon="📈", layout="wide")
+st.title("Delta SMC Bot v5.2 · Validated Research Backtesting")
 st.caption("Public historical market data · closed candles · NO order execution")
 st.warning("SAFE RESEARCH MODE: No API keys, no approvals, and no exchange orders. Results are historical estimates, not predictions.")
 with st.sidebar:
@@ -62,20 +62,21 @@ with tab2:
             def update_progress(value, message):
                 progress_bar.progress(min(1.0, max(0.0, value)), text=message)
                 status.caption(message)
-            trades, summary = run_backtest(run_symbol, days=days, fee_bps=fee_bps,
+            trades, summary, rejected = run_backtest(run_symbol, days=days, fee_bps=fee_bps,
                                            slippage_bps=slippage_bps, risk_pct=risk_pct,
                                            progress=update_progress)
-            st.session_state["backtest_results"] = {run_symbol: {"trades": trades, "summary": summary, "error": None}}
+            st.session_state["backtest_results"] = {run_symbol: {"trades": trades, "summary": summary, "rejected": rejected, "error": None}}
             progress_bar.progress(1.0, text="Backtest complete")
             status.success(f"{run_symbol} {days}-day backtest completed.")
         except Exception as exc:
-            st.session_state["backtest_results"] = {run_symbol: {"trades": pd.DataFrame(), "summary": {}, "error": str(exc)}}
+            st.session_state["backtest_results"] = {run_symbol: {"trades": pd.DataFrame(), "summary": {}, "rejected": pd.DataFrame(), "error": str(exc)}}
             status.error(f"Backtest failed: {exc}")
     for symbol, item in st.session_state.get("backtest_results", {}).items():
         st.markdown(f"### {symbol} · {days}-day results")
         if item["error"]:
             st.error(item["error"]); continue
         s, trades = item["summary"], item["trades"]
+        rejected = item.get("rejected", pd.DataFrame())
         a, b, c, d, e = st.columns(5)
         a.metric("Trades", s["trades"]); b.metric("Win rate", f"{s['win_rate_pct']:.2f}%")
         c.metric("Net R", s["net_R"]); d.metric("Profit factor", s["profit_factor"] if s["profit_factor"] is not None else "N/A")
@@ -93,11 +94,20 @@ with tab2:
                           "net_R": ss["net_R"], "profit_factor": ss["profit_factor"],
                           "max_drawdown_R": ss["max_drawdown_R"]})
         if not trades.empty:
+            st.markdown("#### Valid completed trades")
             st.dataframe(trades, use_container_width=True)
         else:
             st.info("No completed trades in this sample. This is a valid result; do not loosen mandatory filters just to force trades.")
         st.download_button(f"Download {symbol} trade log CSV", trades.to_csv(index=False),
                            file_name=f"{symbol.lower()}_{days}d_backtest.csv", mime="text/csv")
+        st.metric("Rejected invalid candidates", s.get("rejected_candidates", 0))
+        if not rejected.empty:
+            with st.expander("Review rejected candidates and reasons"):
+                st.dataframe(rejected, use_container_width=True)
+                st.download_button(f"Download {symbol} rejected-candidate audit CSV",
+                                   rejected.to_csv(index=False),
+                                   file_name=f"{symbol.lower()}_{days}d_rejected_audit.csv",
+                                   mime="text/csv")
 
 st.subheader("Methodology & limitations")
 st.markdown("""
@@ -106,8 +116,8 @@ st.markdown("""
 - One symbol is replayed at a time; progress is shown during download and candle replay.
 - 15m EMA200 and 5m swing-break proxy are inherited from V4; this is not full discretionary BOS/CHoCH labeling.
 - Liquidity clustering and FVG definitions are mechanical approximations and require chart-by-chart review.
-- Entry is the FVG midpoint only after a later candle revisits that level. Stop is sweep-candle extreme; target is fixed 2R.
-- If SL and TP are both touched in one OHLC candle, SL is assumed first. Fees and slippage are estimates; funding, variable spread, latency, contract sizing and liquidation are not modeled.
+- Entry is the FVG midpoint only after a later candle revisits that level. Stop is sweep-candle extreme; invalid stop/target geometry is rejected. Target must validate at 2R.
+- LONG requires stop < entry < target; SHORT requires target < entry < stop. R is calculated from adverse entry fill to stop. If SL and TP are both touched in one OHLC candle, SL is assumed first. Gap-through stops use the worse candle open. Fees and slippage are estimates; funding, variable spread, latency, contract sizing and liquidation are not modeled.
 - Risk% is used only to illustrate net_R × fixed risk%; no position size or exchange order is calculated.
 - This is a research prototype, not a validated strategy or investment advice. Never connect exchange keys or enable order execution from this build.
 """)
