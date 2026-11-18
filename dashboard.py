@@ -4,8 +4,8 @@ from config import SYMBOLS
 from scanner import scan_symbol
 from backtest import run_backtest, side_summaries
 
-st.set_page_config(page_title="Delta SMC Bot v5.2 Research", page_icon="📈", layout="wide")
-st.title("Delta SMC Bot v5.2 · Validated Research Backtesting")
+st.set_page_config(page_title="Delta SMC Bot v5.4 EMA200 Removed", page_icon="📈", layout="wide")
+st.title("Delta SMC Bot v5.4 · EMA200 Removed")
 st.caption("Public historical market data · closed candles · NO order execution")
 st.warning("SAFE RESEARCH MODE: No API keys, no approvals, and no exchange orders. Results are historical estimates, not predictions.")
 with st.sidebar:
@@ -16,7 +16,7 @@ with st.sidebar:
     fee_bps = st.number_input("Estimated fee per side (bps)", min_value=0.0, max_value=50.0, value=5.0, step=0.5)
     slippage_bps = st.number_input("Estimated slippage per side (bps)", min_value=0.0, max_value=50.0, value=2.0, step=0.5)
     risk_pct = st.number_input("Risk assumption per trade (%)", min_value=0.1, max_value=2.0, value=0.5, step=0.1)
-    st.caption("Strict filters unchanged: 15m EMA200, 5m swing-break proxy, 3m liquidity (3+ touches) + sweep/reclaim, and 3m FVG.")
+    st.caption("EMA200 is informational only — it does NOT block trades. Mandatory: 5m structure break + 3m liquidity (3+ touches) + sweep/reclaim + 3m FVG.")
     st.caption("Historical candle cache: 6 hours. One instrument is replayed at a time.")
 
 tab1, tab2 = st.tabs(["Live scan (research only)", "Historical backtest"])
@@ -109,15 +109,16 @@ with tab2:
                                    file_name=f"{symbol.lower()}_{days}d_rejected_audit.csv",
                                    mime="text/csv")
 
+
 st.subheader("Methodology & limitations")
 st.markdown("""
 - Native 3m/5m/15m public candles; currently forming candles excluded.
 - Candle downloads are cached in Streamlit for six hours; cache is keyed by symbol, timeframe and days.
 - One symbol is replayed at a time; progress is shown during download and candle replay.
-- 15m EMA200 and 5m swing-break proxy are inherited from V4; this is not full discretionary BOS/CHoCH labeling.
+- 15m EMA200 is informational only and never blocks a setup; 5m swing-break proxy is inherited from V4 and is not full discretionary BOS/CHoCH labeling.
 - Liquidity clustering and FVG definitions are mechanical approximations and require chart-by-chart review.
 - Entry is the FVG midpoint only after a later candle revisits that level. Stop is sweep-candle extreme; invalid stop/target geometry is rejected. Target must validate at 2R.
 - LONG requires stop < entry < target; SHORT requires target < entry < stop. R is calculated from adverse entry fill to stop. If SL and TP are both touched in one OHLC candle, SL is assumed first. Gap-through stops use the worse candle open. Fees and slippage are estimates; funding, variable spread, latency, contract sizing and liquidation are not modeled.
 - Risk% is used only to illustrate net_R × fixed risk%; no position size or exchange order is calculated.
-- This is a research prototype, not a validated strategy or investment advice. Never connect exchange keys or enable order execution from this build.
+- EMA200 filter is disabled in this experiment. All other SMC scanner gates remain mandatory. This is a research prototype, not a validated strategy or investment advice. Never connect exchange keys or enable order execution from this build.
 """)

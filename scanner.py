@@ -98,7 +98,7 @@ def _fvg(df: pd.DataFrame, side: str):
         return lo, hi, (lo+hi)/2
     return None
 
-def analyze(symbol: str, d15: pd.DataFrame, d5: pd.DataFrame, d3: pd.DataFrame):
+def analyze(symbol: str, d15: pd.DataFrame, d5: pd.DataFrame, d3: pd.DataFrame, use_ema_filter: bool = False):
     close15 = d15.close.astype(float)
     ema200 = close15.ewm(span=200, adjust=False).mean().iloc[-1]
     px15 = float(close15.iloc[-1])
@@ -107,7 +107,8 @@ def analyze(symbol: str, d15: pd.DataFrame, d5: pd.DataFrame, d3: pd.DataFrame):
     for side in ("long", "short"):
         reasons, checks = [], {}
         checks["15m EMA200 trend"] = trend == side
-        if not checks["15m EMA200 trend"]: reasons.append(f"15m price not aligned {side} of EMA200")
+        if use_ema_filter and not checks["15m EMA200 trend"]:
+            reasons.append(f"15m price not aligned {side} of EMA200")
         bos, bos_text = _structure_break(d5, side)
         checks["5m structure break"] = bos
         if not bos: reasons.append(bos_text)
@@ -126,7 +127,12 @@ def analyze(symbol: str, d15: pd.DataFrame, d5: pd.DataFrame, d3: pd.DataFrame):
         fvg = _fvg(d3, side)
         checks["3m FVG"] = fvg is not None
         if fvg is None: reasons.append("No fresh 3m FVG on latest closed candle")
-        if all(checks.values()) and liq and fvg:
+        mandatory_checks = [checks["5m structure break"],
+                            checks["3m liquidity (3+ touches) + sweep/reclaim"],
+                            checks["3m FVG"]]
+        if use_ema_filter:
+            mandatory_checks.append(checks["15m EMA200 trend"])
+        if all(mandatory_checks) and liq and fvg:
             entry = fvg[2]
             # Stop beyond the sweep candle extreme; 2R target.
             sweep_candle = d3.iloc[-1]
@@ -137,6 +143,9 @@ def analyze(symbol: str, d15: pd.DataFrame, d5: pd.DataFrame, d3: pd.DataFrame):
                 results.append({"symbol":symbol,"side":side,"entry":entry,"stop":stop,"target":target,
                                 "touches":liq[0],"liquidity_level":liq[1],"fvg_low":fvg[0],"fvg_high":fvg[1],
                                 "checks":checks,"signal_time":d3.time_utc.iloc[-1].isoformat(),
+                                "ema200_aligned": checks["15m EMA200 trend"],
+                                "ema200_trend": trend,
+                                "ema200_filter_enabled": use_ema_filter,
                                 "note":"Research candidate only; confirm FVG retracement before any trade."})
         else:
             results.append({"symbol":symbol,"side":side,"candidate":False,"checks":checks,"reasons":reasons,

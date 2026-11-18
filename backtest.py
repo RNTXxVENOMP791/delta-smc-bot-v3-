@@ -121,7 +121,8 @@ def _bar_exit(side: str, bar: pd.Series, stop: float, target: float):
 
 def run_backtest(symbol: str, days: int = 7, fee_bps: float = 5.0, slippage_bps: float = 2.0,
                  risk_pct: float = 0.5, max_signals: int = 250,
-                 progress: ProgressFn = None) -> tuple[pd.DataFrame, dict]:
+                 progress: ProgressFn = None, use_ema_filter: bool = False,
+                 history_data: Optional[dict] = None) -> tuple[pd.DataFrame, dict, pd.DataFrame]:
     """Walk-forward replay with strict geometry validation and fill-based R accounting.
 
     A signal is only evaluated after closed candles. A later 3m candle must revisit
@@ -137,9 +138,10 @@ def run_backtest(symbol: str, days: int = 7, fee_bps: float = 5.0, slippage_bps:
         raise ValueError("Risk assumption must be between 0.1% and 2.0%")
     if progress:
         progress(0.02, f"Loading cached/downloaded candles for {symbol}…")
-    data = {}
+    data = history_data if history_data is not None else {}
     for idx, tf in enumerate(("15m", "5m", "3m")):
-        data[tf] = fetch_history(symbol, tf, days)
+        if tf not in data:
+            data[tf] = fetch_history(symbol, tf, days)
         if progress:
             progress(0.08 + (idx + 1) * 0.12, f"{symbol}: {tf} candles ready ({len(data[tf]):,})")
     d15, d5, d3 = data["15m"], data["5m"], data["3m"]
@@ -169,7 +171,7 @@ def run_backtest(symbol: str, days: int = 7, fee_bps: float = 5.0, slippage_bps:
         if len(h15) < 205 or len(h5) < 20 or len(h3) < 205:
             continue
         try:
-            evaluations = analyze(symbol, h15, h5, h3)
+            evaluations = analyze(symbol, h15, h5, h3, use_ema_filter=use_ema_filter)
         except Exception as exc:
             rejected.append({"symbol": symbol, "signal_time": d3.time_utc.iloc[i].isoformat(),
                              "reason": f"Scanner error: {type(exc).__name__}: {exc}"})
@@ -258,6 +260,7 @@ def run_backtest(symbol: str, days: int = 7, fee_bps: float = 5.0, slippage_bps:
     summary = _summary(tdf, risk_pct)
     summary.update({"candles_3m": int(len(d3)), "candles_5m": int(len(d5)),
                     "candles_15m": int(len(d15)), "risk_pct": risk_pct,
+                    "ema200_filter": "mandatory" if use_ema_filter else "removed",
                     "rejected_candidates": len(rejected)})
     summary["note"] += (" Fees and slippage are estimated per side. Funding, variable spread, contract sizing, "
                         "liquidation, latency and compounding are not modeled. Invalid trade geometry is rejected. "
